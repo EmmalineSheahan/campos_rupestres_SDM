@@ -9,12 +9,14 @@ library(rgeos)
 library(maptools)
 library(rgdal)
 library(rnaturalearth)
+library(spThin)
 
 # creating land
 land <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")[1]
+land_poly <- as_Spatial(land)
 
 # read in raw data
-poales <- read.csv('./data/poales_data_campos_rupestres.csv')
+poales <- read.csv('./data/poales_data_campos_rupestres_2.csv')
 
 # investigate
 names(poales)
@@ -56,18 +58,41 @@ merc_crs <- merc_crs$prj4
 
 # creating and cleaning spatial points dataframes per species
 dir.create('./Occurrences')
+dir.create('./AccArea')
+
+# creating list for nat ranges
+nat_ranges <- list.files('./nat_ranges')
+nat_ranges <- gsub(".dbf", '', nat_ranges)
+nat_ranges <- gsub(".prj", '', nat_ranges)
+nat_ranges <- gsub(".shp", '', nat_ranges)
+nat_ranges <- gsub(".shx", '', nat_ranges)
+nat_ranges <- unique(nat_ranges)
 
 poales_names_list <- unique(poales_new$two_word_species)
+poales_titles <- gsub("_", ' ', poales_names_list)
+
+test_list <- sample(1:length(poales_names_list), replace = F)[1:100]
+poales_names_list <- poales_names_list[test_list]
+poales_titles <- poales_titles[test_list]
+
+pdf('./plots/occ_clean_first_test.pdf')
 for (i in 1:length(poales_names_list)) {
   wanted_spec <- poales_new %>% filter(two_word_species == poales_names_list[i])
   wanted_spec2 <- wanted_spec %>% filter(!(is.na(geodeticDatum)))
   wanted_spec3 <- wanted_spec2 %>% filter(!(is.na(decimalLongitude)))
   wanted_spec4 <- wanted_spec3 %>% filter(!(is.na(decimalLatitude)))
+  wanted_spec4 <- wanted_spec4[which(!(duplicated(wanted_spec4$Date))),]
+  if (dim(wanted_spec4)[1] == 0) {
+    print("No Coordinates")
+  } else {
   sp_list <- vector("list", length = nrow(wanted_spec4))
   for (j in 1:nrow(wanted_spec4)) {
     test_sp <- wanted_spec4[j,]
     test_sp$decimalLongitude <- as.numeric(test_sp$decimalLongitude)
     test_sp$decimalLatitude <- as.numeric(test_sp$decimalLatitude)
+    if (is.na(test_sp$geodeticDatum)) {
+      test_sp$geodeticDatum <- "WGS84"
+    } 
     if (test_sp$geodeticDatum == "WGS84" || 
         test_sp$geodeticDatum == "World Geodetic System 1984" ||
         test_sp$geodeticDatum == "EPSG:4326" ||
@@ -96,7 +121,8 @@ for (i in 1:length(poales_names_list)) {
       proj4string(test_sp) <- merc_crs
       test_sp <- spTransform(test_sp, CRSobj = target_crs)
     } else {
-      test_sp <- NA
+      coordinates(test_sp) <- ~decimalLongitude+decimalLatitude
+      proj4string(test_sp) <- target_crs
     }
     if (is.na(test_sp)) {
       sp_list[[j]] <- NA
@@ -106,4 +132,45 @@ for (i in 1:length(poales_names_list)) {
   }
   sp_all <- do.call(rbind, sp_list)
   sp_all <- sp_all[complete.cases(sp_all),]
+  if (length(sp_all) < 1) {
+    print("No Geodetic datum")
+  } else if (length(sp_all) < 3) {
+    print("only one record") 
+  } else {
+  sp_all <- data.frame(sp_all)
+  sp_all_nodup <- unique(sp_all)
+  species <- rep(poales_names_list[i], times = nrow(sp_all_nodup))
+  sp_all_nodup <- cbind(species, sp_all_nodup)
+  sp_all_nosea <- cc_sea(sp_all_nodup, lon = "decimalLongitude", lat = "decimalLatitude")
+  if (poales_names_list[i] %in% nat_ranges) {
+    want_range <- shapefile(paste0('./nat_ranges/', poales_names_list[i], '.shp'))
+    sp_all_natrange <- cc_iucn(sp_all_nosea, want_range, lon = "decimalLongitude",
+                             lat = "decimalLatitude", species = "species")
+  } else {
+    sp_all_natrange <- sp_all_nosea
+  }
+  if (nrow(sp_all_natrange) > 20) {
+    sp_all_noout <- cc_outl(sp_all_natrange, lon = "decimalLongitude", 
+                          lat = "decimalLatitude", species = "species", 
+                          method = "distance", value = "clean", 
+                          tdi = 1000)
+  } else {
+    sp_all_noout <- sp_all_natrange
+  }
+  if (nrow(sp_all_noout) == 0) {
+    print("all outside natural range")
+  } else {
+  sp_occs <- sp_all_noout
+  coordinates(sp_occs) <- ~decimalLongitude+decimalLatitude
+  plot(sp_occs, col = "red", main = poales_titles[i], pch = 19)
+  plot(land_poly, add = T, col = NA)
+  if (poales_names_list[i] %in% nat_ranges) {
+    plot(want_range, col = NA, border = "blue", add = T)
+  }
+  }
+  # thinning step here
+  # write.csv(sp_all_thinned, file = paste0('./Occurrences/', poales_names_list[i], '.csv'))
+  }
+  }
 }
+dev.off()
