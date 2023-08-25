@@ -18,10 +18,17 @@ land_poly <- as_Spatial(land)
 # read in raw data
 poales <- read.csv('./data/poales_data_campos_rupestres_2.csv')
 
-# investigate
-names(poales)
-length(unique(poales$two_word_species))
-poales$year
+# correcting synonyms and removing incorrect classifications
+correct_syn <- read.csv('./data/poales_accepted_with_synomyns_minus_wrong_taxa.csv')
+for (i in 1:nrow(correct_syn)) {
+  t <- which(poales$two_word_species == correct_syn$synonyms[i])
+  if (length(t) > 0) {
+  poales$two_word_species[t] <- correct_syn$accepted_names[i]
+  }
+}
+
+keep <- which(poales$two_word_species %in% correct_syn$accepted_names)
+poales <- poales[keep,]
 
 # creating singular date column
 poales$Date <- vector(length = length(poales$year))
@@ -58,7 +65,6 @@ merc_crs <- merc_crs$prj4
 
 # creating and cleaning spatial points dataframes per species
 dir.create('./Occurrences')
-dir.create('./AccArea')
 
 # creating list for nat ranges
 nat_ranges <- list.files('./nat_ranges')
@@ -71,11 +77,7 @@ nat_ranges <- unique(nat_ranges)
 poales_names_list <- unique(poales_new$two_word_species)
 poales_titles <- gsub("_", ' ', poales_names_list)
 
-test_list <- sample(1:length(poales_names_list), replace = F)[1:100]
-poales_names_list <- poales_names_list[test_list]
-poales_titles <- poales_titles[test_list]
-
-pdf('./plots/occ_clean_first_test.pdf')
+pdf('./plots/occ_clean_all_poales.pdf')
 for (i in 1:length(poales_names_list)) {
   wanted_spec <- poales_new %>% filter(two_word_species == poales_names_list[i])
   wanted_spec2 <- wanted_spec %>% filter(!(is.na(geodeticDatum)))
@@ -90,7 +92,11 @@ for (i in 1:length(poales_names_list)) {
     test_sp <- wanted_spec4[j,]
     test_sp$decimalLongitude <- as.numeric(test_sp$decimalLongitude)
     test_sp$decimalLatitude <- as.numeric(test_sp$decimalLatitude)
-    if (is.na(test_sp$geodeticDatum)) {
+    if (is.na(test_sp$geodeticDatum) & 
+        test_sp$decimalLatitude > -180 & 
+        test_sp$decimalLatitude < 180 & 
+        test_sp$decimalLongitude > -90 &
+        test_sp$decimalLongitude < 90) {
       test_sp$geodeticDatum <- "WGS84"
     } 
     if (test_sp$geodeticDatum == "WGS84" || 
@@ -120,9 +126,14 @@ for (i in 1:length(poales_names_list)) {
       coordinates(test_sp) <- ~decimalLongitude+decimalLatitude
       proj4string(test_sp) <- merc_crs
       test_sp <- spTransform(test_sp, CRSobj = target_crs)
-    } else {
+    } else if (test_sp$decimalLatitude > -180 & 
+               test_sp$decimalLatitude < 180 & 
+               test_sp$decimalLongitude > -90 &
+               test_sp$decimalLongitude < 90) {
       coordinates(test_sp) <- ~decimalLongitude+decimalLatitude
       proj4string(test_sp) <- target_crs
+    } else {
+      test_sp <- NA
     }
     if (is.na(test_sp)) {
       sp_list[[j]] <- NA
@@ -160,17 +171,28 @@ for (i in 1:length(poales_names_list)) {
   if (nrow(sp_all_noout) == 0) {
     print("all outside natural range")
   } else {
-  sp_occs <- sp_all_noout
-  coordinates(sp_occs) <- ~decimalLongitude+decimalLatitude
-  plot(sp_occs, col = "red", main = poales_titles[i], pch = 19)
-  plot(land_poly, add = T, col = NA)
+  sp_thinned <- thin(loc.data = sp_all_noout, lat.col = "decimalLatitude", 
+                     long.col = "decimalLongitude", spec.col = "species", thin.par = 10,
+                     reps = 1, write.files = F, locs.thinned.list.return = T)
+  sp_all_thinned <- sp_thinned[[1]]
+  sp_occs <- sp_all_thinned
+  coordinates(sp_occs) <- ~Longitude+Latitude
+  plot(land_poly, col = NA, main = poales_titles[i],)
+  plot(sp_occs, col = "red", pch = 19, cex = 0.25, add = T)
   if (poales_names_list[i] %in% nat_ranges) {
     plot(want_range, col = NA, border = "blue", add = T)
   }
+  species <- rep(poales_names_list[i], times = nrow(sp_all_thinned))
+  sp_all_thinned <- cbind(sp_all_thinned, species)
+  write.csv(sp_all_thinned, file = paste0('./Occurrences/', poales_names_list[i], '.csv'))
   }
-  # thinning step here
-  # write.csv(sp_all_thinned, file = paste0('./Occurrences/', poales_names_list[i], '.csv'))
   }
   }
 }
 dev.off()
+
+all_poales <- list.files('./Occurrences')
+all_poales <- gsub('.csv', '', all_poales)
+all_poales <- gsub('_', ' ', all_poales)
+write.table(all_poales, file = './data/all_poales_species_list.txt', row.names = F,
+            col.names = F)

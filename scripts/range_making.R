@@ -10,10 +10,17 @@ library(terra)
 library(rgdal)
 library(raster)
 
+dir.create('./plots')
+
+# creating land
+land <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")[1]
+land_poly <- as_Spatial(land)
+
 # reading in data
 incorrect_syn <- read.csv('./data/incorrect_syn_wcvp.csv')
 wcvp_dist <- read.csv('./data/wcvp_taxon_poales_cr_dist_filtered_2.csv')
 brazil_dist <- read.csv('./data/poales_distribution_brazil.csv')
+correct_syn <- read.csv('./data/poales_accepted_with_synomyns_minus_wrong_taxa.csv')
 
 # correcting names to match with poales data
 wrong_names <- incorrect_syn$Accepted.by.WCVP.but.should.be.considered.synonyms
@@ -26,6 +33,18 @@ for (i in 1:length(wcvp_dist$scientfiicname)) {
   }
   wcvp_dist$scientfiicname[i] <- gsub(' ', '_', wcvp_dist$scientfiicname[i])
 }
+
+for (i in 1:length(brazil_dist$TAXON)) {
+  if (brazil_dist$TAXON[i] %in% wrong_names) {
+    wanted_num <- which(brazil_dist$TAXON[i] %in% wrong_names)
+    brazil_dist$TAXON[i] <- correct_names[wanted_num]
+  }
+  brazil_dist$TAXON[i] <- gsub(' ', '_', brazil_dist$TAXON[i])
+}
+
+correct_syn$accepted_names <- gsub(' ', '_', correct_syn$accepted_names)
+remove_brazil <- which(!(brazil_dist$TAXON %in% correct_syn$accepted_names))
+brazil_dist <- brazil_dist[-remove_brazil,]
 
 # creating directory for range maps
 dir.create('./nat_ranges')
@@ -225,7 +244,6 @@ for (i in 1:length(wcvp_dist$locality)) {
 
 # Separating list into Brazil species and non Brazil species
 brazil_species <- brazil_dist$TAXON
-brazil_species <- gsub(' ', '_', brazil_species)
 for (i in 1:length(wcvp_dist$scientfiicname)) {
   loc <- wcvp_dist[i,] %>% dplyr::select(locality)
   if(length(loc) == 1 & loc == "Brazil" | is.na(loc)) {
@@ -236,6 +254,10 @@ drop_spec <- which(is.na(wcvp_dist$scientfiicname))
 wcvp_dist <- wcvp_dist[-drop_spec,]
 wcvp_species <- wcvp_dist$scientfiicname
 wcvp_species <- unique(wcvp_species)
+
+for (i in 4:9) {
+  brazil_dist[,i] <- as.numeric(brazil_dist[,i])
+}
 
 # creating species range polygons for coordinate cleaning
 for (i in seq_along(brazil_species)) {
