@@ -93,8 +93,8 @@ for (i in seq_along(species_list_final)) {
   proj4string(temp_spec) <- CRS("+proj=longlat +datum=WGS84")
   temp_trans <- spTransform(temp_spec, CRSobj = "+proj=cea +lat_ts=0 +lon_0")
   temp_alph <- getDynamicAlphaHull(temp_spec_coords, fraction = 1, partCount = 1, 
-                                   initialAlpha = 20, clipToCoast = "terrestrial",
-                                   coordHeaders = c("Longitude", "Latitude"))
+                                   initialAlpha = 40, clipToCoast = "terrestrial",
+                                   coordHeaders = c("Longitude", "Latitude"), buff = 100000)
   temp_alph <- spTransform(as_Spatial(temp_alph[[1]]), 
                            CRSobj = "+proj=cea +lat_ts=0 +lon_0")
   shape_list <- vector("list", length = length(buff_props))
